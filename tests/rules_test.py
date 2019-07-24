@@ -253,5 +253,63 @@ class GenderValidationTest(absltest.TestCase):
       self.gender_validator.check(gender_element)
 
 
+class GpUnitsTreeValidationTest(absltest.TestCase):
+
+  def setUp(self):
+    super(GpUnitsTreeValidationTest, self).setUp()
+    self.gpunits_tree_validator = rules.GpUnitsTree(None, None)
+
+  def testValidationFailsIfCyclesFormed(self):
+    root_string = """
+    <xml>
+      <GpUnitCollection>
+        <GpUnit objectId="ru0002">
+          <ComposingGpUnitIds>ru_temp_id</ComposingGpUnitIds>
+          <Name>Virginia</Name>
+          <Type>state</Type>
+        </GpUnit>
+        <GpUnit objectId="ru_pre92426">
+          <ComposingGpUnitIds>ru_temp_id</ComposingGpUnitIds>
+          <Name>304 - EAST IVY</Name>
+          <Type>precinct</Type>
+        </GpUnit>
+        <GpUnit objectId="ru_temp_id">
+          <ComposingGpUnitIds>ru_pre92426</ComposingGpUnitIds>
+          <Name>999 - TEMP</Name>
+          <Type>precinct</Type>
+        </GpUnit>
+      </GpUnitCollection>
+    </xml>
+    """
+    with self.assertRaises(base.ElectionTreeError):
+      self.gpunits_tree_validator.election_tree = ET.ElementTree(
+          ET.fromstring(root_string))
+      self.gpunits_tree_validator.check()
+
+  def testValidationIfTreeFormed(self):
+    root_string = """
+    <xml>
+      <GpUnitCollection>
+        <GpUnit objectId="ru0002">
+          <ComposingGpUnitIds>ru_temp_id</ComposingGpUnitIds>
+          <Name>Virginia</Name>
+          <Type>state</Type>
+        </GpUnit>
+        <GpUnit objectId="ru_pre92426">
+          <Name>304 - EAST IVY</Name>
+          <Type>precinct</Type>
+        </GpUnit>
+        <GpUnit objectId="ru_temp_id">
+          <Name>999 - TEMP</Name>
+          <Type>precinct</Type>
+        </GpUnit>
+      </GpUnitCollection>
+    </xml>
+    """
+    self.gpunits_tree_validator.election_tree = ET.ElementTree(
+        ET.fromstring(root_string))
+    self.gpunits_tree_validator.check()
+
+
 if __name__ == "__main__":
   absltest.main()

@@ -491,6 +491,8 @@ class DuplicateGpUnits(base.TreeRule):
   def find_duplicates(self):
     tags = dict()
     for object_id in self.children:
+      if not self.children[object_id]:
+        continue
       sorted_children = " ".join(sorted(self.children[object_id]))
       if sorted_children in tags:
         tags[sorted_children].append(object_id)
@@ -510,6 +512,7 @@ class DuplicateGpUnits(base.TreeRule):
     if object_id in self.leaf_nodes:
       return
     composing_ids = self.get_composing_gpunits(gpunit)
+    visited = set()
     while True:
       # Iterate over the set of GpUnits which compose this particular
       # GpUnit. If any of the children of this node have children
@@ -537,7 +540,10 @@ class DuplicateGpUnits(base.TreeRule):
           # TODO: Figure out error
           print("Non-leaf node {} has no children".format(middle_node))
           continue
+        visited.add(middle_node)
         for node in self.children[middle_node]:
+          if node in visited:
+            continue
           composing_ids.add(node)
         composing_ids.remove(middle_node)
 
@@ -1094,6 +1100,77 @@ class PersonsHaveValidGender(base.BaseRule):
           "Person object has invalid gender value: %s" % element.text)
 
 
+class TreeNode(object):
+
+  def __init__(self, val):
+    self.key = val
+    self.children = []
+
+  def add_child(self, child):
+    if child is not None:
+      self.children.append(TreeNode(child))
+
+
+class GpUnitsTree(base.TreeRule):
+  """Ensure that GpUnits form a tree and no cycles are present."""
+
+  def __init__(self, election_tree, schema_file):
+    super(GpUnitsTree, self).__init__(election_tree, schema_file)
+    self.edges = dict()
+    self.visited = dict()
+    self.error_log = list()
+    self.nodes = list()
+
+  def build_tree(self, gpunit, composing_gpunits):
+    obj = TreeNode(gpunit)
+    # Check if the node is already visited
+    if obj.key in self.visited:
+      if obj.key not in self.nodes:
+        error_message = ("Cycle detected at node {0}".format(obj.key))
+        self.error_log.append(base.ErrorLogEntry(None, error_message))
+        self.nodes.append(obj.key)
+      return
+    self.visited[obj.key] = 1
+    # Add nodes to the tree
+    if composing_gpunits:
+      for each_unit in composing_gpunits:
+        obj.add_child(each_unit)
+        if each_unit in self.edges:
+          self.build_tree(each_unit, self.edges[each_unit])
+        else:
+          error_message = ("Node {0} is not present in the"
+                           " file as a GpUnit element.".format(each_unit))
+          self.error_log.append(base.ErrorLogEntry(None, error_message))
+
+  def check(self):
+    self.nodes = []
+    self.error_log = []
+    root = self.election_tree.getroot()
+    if root is None:
+      return
+    gpunit_collection = root.find("GpUnitCollection")
+    if gpunit_collection is None:
+      return
+    for element in gpunit_collection:
+      tag = self.strip_schema_ns(element)
+      if tag != "GpUnit":
+        continue
+      object_id = element.get("objectId", None)
+      if object_id is None:
+        continue
+      self.edges[object_id] = []
+      composing_gp_unit = element.find("ComposingGpUnitIds")
+      if composing_gp_unit is None or composing_gp_unit.text is None:
+        continue
+      composing_gp_unit_ids = composing_gp_unit.text.split()
+      self.edges[object_id] = composing_gp_unit_ids
+    for gpunit, composing_gpunits in self.edges.items():
+      self.build_tree(gpunit, composing_gpunits)
+      self.visited.clear()
+    if self.error_log:
+      raise base.ElectionTreeError("The GpUnits have cycle.", self.error_log)
+
+
 def sourceline_prefix(element):
   if hasattr(element, "sourceline") and element.sourceline is not None:
     return "Line %d. " % element.sourceline
@@ -1128,6 +1205,7 @@ COMMON_RULES = (
     ValidIDREF,
     ValidateOcdidLowerCase,
     PersonsHaveValidGender,
+    GpUnitsTree,
 )
 
 ELECTION_RULES = COMMON_RULES + (
