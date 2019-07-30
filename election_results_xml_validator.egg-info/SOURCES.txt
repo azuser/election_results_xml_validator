@@ -1,0 +1,16 @@
+CONTRIBUTING.md
+MANIFEST.in
+README.md
+__init__.py
+base.py
+rules.py
+setup.cfg
+setup.py
+validator.py
+version.py
+election_results_xml_validator.egg-info/PKG-INFO
+election_results_xml_validator.egg-info/SOURCES.txt
+election_results_xml_validator.egg-info/dependency_links.txt
+election_results_xml_validator.egg-info/entry_points.txt
+election_results_xml_validator.egg-info/requires.txt
+election_results_xml_validator.egg-info/top_level.txt

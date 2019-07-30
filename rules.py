@@ -33,11 +33,7 @@ from lxml import etree
 import requests
 from six.moves.urllib.parse import urlparse
 
-PARTY_LEADERSHIP_TYPES = ["party-leader-id", "party-chair-id"]
-
-
-def fuzzy_equals(a, b, epsilon=1e-6):
-  return abs(a - b) < epsilon
+_PARTY_LEADERSHIP_TYPES = ["party-leader-id", "party-chair-id"]
 
 
 def sourceline_prefix(element):
@@ -161,8 +157,7 @@ class LanguageCode(base.BaseRule):
     if "language" not in element.attrib:
       return
     elem_lang = element.get("language")
-    if (not elem_lang or elem_lang.strip() == "" or
-        not language_tags.tags.check(elem_lang)):
+    if (not elem_lang.strip() or not language_tags.tags.check(elem_lang)):
       raise base.ElectionError("Line %d. %s is not a valid language code" %
                                (element.sourceline, elem_lang))
 
@@ -173,15 +168,20 @@ class PercentSum(base.BaseRule):
   def elements(self):
     return ["Contest"]
 
+  @staticmethod
+  def fuzzy_equals(a, b, epsilon=1e-6):
+    return abs(a - b) < epsilon
+
   def check(self, element):
     sum_percents = 0.0
     for ballot_selection in element.findall("BallotSelection"):
       for vote_counts in (
           ballot_selection.find("VoteCountsCollection").findall("VoteCounts")):
-        if vote_counts.find("OtherType").text == "total-percent":
+        other_type = vote_counts.find("OtherType")
+        if other_type is not None and other_type.text == "total-percent":
           sum_percents += float(vote_counts.find("Count").text)
-    if (not fuzzy_equals(sum_percents, 0) and
-        not fuzzy_equals(sum_percents, 100)):
+    if (not PercentSum.fuzzy_equals(sum_percents, 0) and
+        not PercentSum.fuzzy_equals(sum_percents, 100)):
       raise base.ElectionError(
           sourceline_prefix(element) +
           "Contest percents do not sum to 0 or 100: %f" % sum_percents)
@@ -201,7 +201,7 @@ class OnlyOneElection(base.BaseRule):
 
 
 class EmptyText(base.BaseRule):
-  """Check that Text elements are not empty."""
+  """Check that Text elements are not strictly whitespace."""
 
   def elements(self):
     return ["Text"]
@@ -294,7 +294,7 @@ class ElectoralDistrictOcdId(base.BaseRule):
       self.gpunits.append(gpunit)
 
   def setup(self):
-    if not self.local_file:
+    if self.local_file is None:
       self.github_file = "country-%s.csv" % self.country_code
     self.ocds = self._get_ocd_data()
 
@@ -380,9 +380,8 @@ class ElectoralDistrictOcdId(base.BaseRule):
       shutil.copy("{0}.tmp".format(file_path), file_path)
 
   def _verify_data(self, file_path):
-    """Validates a file's SHA and returns the set of corresponding ocd ids."""
+    """Validates a file's SHA."""
     file_sha1 = hashlib.sha1()
-    ocd_id_codes = set()
     file_info = os.stat(file_path)
     # GitHub calculates the blob SHA like this:
     # sha1("blob "+filesize+"\0"+data)
@@ -390,13 +389,8 @@ class ElectoralDistrictOcdId(base.BaseRule):
     with io.open(file_path, mode="rb") as fd:
       for line in fd:
         file_sha1.update(line)
-        if line is not "":
-          ocd_id_codes.add(line.split(b",")[0])
     latest_file_sha = self._get_latest_file_blob_sha()
-    if latest_file_sha != file_sha1.hexdigest():
-      return False
-    else:
-      return True
+    return latest_file_sha == file_sha1.hexdigest()
 
   def _get_latest_file_blob_sha(self):
     """Returns the GitHub blob SHA of country-*.csv."""
@@ -430,12 +424,14 @@ class ElectoralDistrictOcdId(base.BaseRule):
             value = extern_id.find("Value")
             if value is None or not hasattr(value, "text"):
               continue
+
             if isinstance(value.text, str):
               ocd_id = value.text
             elif isinstance(value.text, unicode):
               ocd_id = value.text.encode("utf-8")
             else:
               ocd_id = ""
+
             if ocd_id in self.ocds:
               valid_ocd_id = True
           if (id_type is not None and id_type.text != "ocd-id" and
@@ -661,10 +657,11 @@ class PartisanPrimary(base.BaseRule):
     primary_party_ids = element.find("PrimaryPartyIds")
     if (primary_party_ids is None or not primary_party_ids.text or
         not primary_party_ids.text.strip()):
+      election_elem = self.election_tree.find("Election")
       raise base.ElectionError(
           "Line %d. Election is of ElectionType %s but PrimaryPartyIds "
           "is not present or is empty" %
-          (primary_party_ids.sourceline, self.election_type))
+          (election_elem.sourceline, self.election_type))
 
 
 class PartisanPrimaryHeuristic(PartisanPrimary):
@@ -720,7 +717,7 @@ class UniqueLabel(base.BaseRule):
       tag = self.strip_schema_ns(element)
       if tag == "element":
         elem_type = element.get("type", None)
-        if elem_type and elem_type == "InternationalizedText":
+        if elem_type == "InternationalizedText":
           if element.get("name") not in eligible_elements:
             eligible_elements.append(element.get("name"))
     return eligible_elements
@@ -750,8 +747,7 @@ class ReusedCandidate(base.TreeRule):
     # Mapping of candidates and candidate selections.
     self.seen_candidates = {}
 
-  def check(self):
-    error_log = []
+  def _register_candidates(self):
     candidate_selections = self.get_elements_by_class(self.election_tree,
                                                       "CandidateSelection")
     for candidate_selection in candidate_selections:
@@ -763,6 +759,10 @@ class ReusedCandidate(base.TreeRule):
         if candidate_selection_id:
           self.seen_candidates.setdefault(candidate_id,
                                           []).append(candidate_selection_id)
+
+  def check(self):
+    self._register_candidates()
+    error_log = []
     for cand_id, cand_select_ids in self.seen_candidates.items():
       if len(cand_select_ids) > 1:
         error_message = "A Candidate object should only ever be " \
@@ -799,9 +799,9 @@ class ProperBallotSelection(base.BaseRule):
       selections += self.get_elements_by_class(element, self.con_sel_mapping[c])
     for selection in selections:
       selection_tag = self.get_element_class(selection)
-      contest_id = element.get("objectId", None)
-      selection_id = selection.get("objectId", None)
       if (selection_tag != self.con_sel_mapping[tag]):
+        contest_id = element.get("objectId", None)
+        selection_id = selection.get("objectId", None)
         raise base.ElectionError(
             "Line %d. The Contest %s does not contain the right "
             "BallotSelection. %s must have a %s but contains a "
@@ -810,7 +810,7 @@ class ProperBallotSelection(base.BaseRule):
 
 
 class MissingPartyAffiliation(base.TreeRule):
-  """Each PartyId referenced in a Person or Candidate must have an associated Party.
+  """Each Person/Candidate PartyId must have an associated Party.
 
   A PartyId that has no Party that references them should be picked up
   within this class and returned to the user as an error.
@@ -818,7 +818,7 @@ class MissingPartyAffiliation(base.TreeRule):
 
   def check(self):
     root = self.election_tree.getroot()
-    if root is None:
+    if not root.getchildren():
       return
 
     check_party_ids = set()
@@ -836,10 +836,12 @@ class MissingPartyAffiliation(base.TreeRule):
         if party_id is not None and party_id.text and party_id.text.strip():
           check_party_ids.add(party_id.text.strip())
 
+    all_parties = set()
     party_collection = root.find("PartyCollection")
-    all_parties = set(party.attrib["objectId"] for party
-                      in party_collection if party is not None
-                      and party.get("objectId", None))
+    if party_collection is not None:
+      all_parties = set(party.attrib["objectId"] for party
+                        in party_collection if party is not None
+                        and party.get("objectId", None))
 
     missing_parties = check_party_ids - all_parties
     if check_party_ids and missing_parties:
@@ -996,7 +998,7 @@ class OfficeMissingOfficeHolderPersonData(base.TreeRule):
 
   def check(self):
     root = self.election_tree.getroot()
-    if root is None:
+    if not root.getchildren():
       return
 
     office_collection = root.find("OfficeCollection")
@@ -1197,13 +1199,13 @@ class PersonHasOffice(base.TreeRule):
 
   def check(self):
     root = self.election_tree.getroot()
-    if root is None:
+    if not root.getchildren():
       return
 
     party_leader_ids = set()
     for external_id in root.findall(".//Party//ExternalIdentifier"):
       other_type = external_id.find("OtherType")
-      if other_type is not None and other_type.text in PARTY_LEADERSHIP_TYPES:
+      if other_type is not None and other_type.text in _PARTY_LEADERSHIP_TYPES:
         party_leader_ids.add(external_id.find("Value").text)
 
     person_collection = root.find("PersonCollection")
@@ -1243,7 +1245,7 @@ class PartyLeadershipMustExist(base.TreeRule):
     party_leader_ids = set()
     for external_id in root.findall(".//Party//ExternalIdentifier"):
       other_type = external_id.find("OtherType")
-      if other_type is not None and other_type.text in PARTY_LEADERSHIP_TYPES:
+      if other_type is not None and other_type.text in _PARTY_LEADERSHIP_TYPES:
         party_leader_ids.add(external_id.find("Value").text)
 
     persons = root.find("PersonCollection")
@@ -1455,3 +1457,4 @@ OFFICEHOLDER_RULES = COMMON_RULES + (
 )
 
 ALL_RULES = frozenset(COMMON_RULES + ELECTION_RULES + OFFICEHOLDER_RULES)
+

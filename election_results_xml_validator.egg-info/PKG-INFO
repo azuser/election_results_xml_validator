@@ -1,0 +1,12 @@
+Metadata-Version: 1.2
+Name: election-results-xml-validator
+Version: 0.2.9.29
+Summary: Checks if an election feed follows best practices
+Home-page: https://github.com/google/election_results_xml_validator
+Author: Google Civics
+Author-email: election-results-xml-validator@google.com
+Maintainer: gVelocity Civics
+Maintainer-email: election-results-xml-validator@google.com
+License: Apache License
+Description: election_results_xml_validator is a script that checks if an election data feed follows best practices and outputs errors, warnings and info messages for common issues.
+Platform: UNKNOWN

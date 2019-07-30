@@ -1,0 +1,5 @@
+cryptography>=2.5
+lxml>=3.3.4
+language-tags>=0.4.2
+requests>=2.10
+pygithub>=1.28

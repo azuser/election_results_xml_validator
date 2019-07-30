@@ -1,0 +1,3 @@
+[console_scripts]
+election_results_xml_validator = election_results_xml_validator.validator:main
+
